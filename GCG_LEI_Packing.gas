@@ -1,0 +1,544 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.Global.sReportID.Declare(String)
+Variable.Global.sTerminal.Declare(String)
+Variable.UDT.uPacking.Define("sSeq",String,Sequence)
+Variable.UDT.uPacking.Define("sRecNum",String,Record_No)
+Variable.UDT.uPacking.Define("sRecType",String,Record_Type)
+Variable.UDT.uPacking.Define("sPart",String,Part)
+Variable.UDT.uPacking.Define("sDesc",String,Description)
+Variable.UDT.uPacking.Define("sLineType",String,Line_Type)
+Variable.UDT.uPacking.Define("iQty",Float,Qty_Order)
+Variable.UDT.uPacking.Define("sOrder",String,Order_NO)
+Variable.UDT.uPacking.Define("sOrderSuffix",String,Order_Suffix)
+Variable.UDT.uPacking.Define("sUM",String,UM)
+Variable.UDT.uPacking.Define("iShipped",Float,Qty_Shipped)
+Variable.UDT.uPacking.Define("iBO",Float,Qty_BO)
+Variable.uGlobal.uPacking.Declare("uPacking")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'This Script was created for Leigh Fibers on 9/19/14 by SKT
+'This will alter the information in the core BI table for the Packing List report.
+
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+V.Local.sSql.Declare(String)
+V.Local.sWeight.Declare(String)
+V.Local.sOrder.Declare(String)
+'V.Local.sPacking.Declare(String)
+'V.Local.sRet.Declare(String)
+'V.Local.iPcount.Declare(Long)
+V.Local.iRow.Declare(Long)
+V.Local.iCount.Declare(Long)
+
+
+
+
+
+F.Intrinsic.Control.If(V.Caller.Hook,=,16090)
+	F.Intrinsic.Control.If(V.Passed.009001,=,"000051")
+		F.ODBC.Connection!conx.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+		V.Global.sReportID.Set("000051")
+		V.Global.sTerminal.Set(V.Caller.Terminal)
+		'Getting Packing list data from the BI Table
+		F.Intrinsic.String.Concat("Select Sequence, Record_No, Record_Type, Part, Description, Line_Type, Qty_Order, Order_No, Order_Suffix, UM, Qty_Shipped, Qty_BO from BI_Packing_List Where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Line_Type = 'L'",V.Local.sSql)
+		F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+		F.Intrinsic.Variable.LoadUDTFromRecordset("conx","rst","v.uGlobal.uPacking",False)
+		F.ODBC.conx!rst.Close
+		'Check to see if the order was in Gross or Net
+		F.Intrinsic.String.Concat("Select Gross, Net from GCG_LEI_OE_Weight where Order_Num = '",V.uGlobal.uPacking(0)!sOrder.Trim,"'",V.Local.sSql)
+		F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+		F.Intrinsic.Control.If(V.ODBC.conx!rst.FieldValLTrim!Net,=,"Y")
+			F.ODBC.conx!rst.Close
+			F.Intrinsic.Control.CallSub(Net)
+		F.Intrinsic.Control.ElseIf(V.ODBC.conx!rst.FieldValTrim!Gross,=,"Y")
+			F.ODBC.conx!rst.Close
+			F.Intrinsic.Control.CallSub(Gross)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_LEI_Packing.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.Net.Start
+F.Intrinsic.Control.SetErrorHandler("Net_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sPart.Declare(String)
+V.Local.sLot.Declare(String)
+V.Local.sSql.Declare(String)
+V.Local.sNet.Declare(String)
+V.Local.sTare.Declare(String)
+V.Local.sGross.Declare(String)
+V.Local.sLine.Declare(String)
+V.Local.sLine2.Declare(String)
+V.Local.sRet.Declare(String)
+V.Local.iCount.Declare(Long)
+V.Local.iBin.Declare(Long)
+
+
+'Loop through the Packing List
+F.Intrinsic.String.Concat("Update BI_Packing_List set Part = '', Description = '', Record_Type = '', Record_No = '', Line_Type = '', UM= '', Qty_Order = '', Qty_Shipped = '', Qty_BO = ''   where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence > 000001",V.Local.sSql)
+F.ODBC.Connection!conx.Execute(V.Local.sSql)
+
+
+V.Local.sLine.Set(V.uGlobal.uPacking(v.Local.iCount)!sSeq.Trim)
+
+F.Intrinsic.Control.For(V.Local.iCount,0,V.uGlobal.uPacking.UBound,1)
+	F.Intrinsic.String.Concat("Select Count (Bin) as Bin from GCG_Lei_Ship where Order_No = '",V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim,"' and Part = '",V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+	V.Local.iBin.Set(V.ODBC.conx!rst.FieldValTrim!Bin)
+	F.ODBC.conx!rst.Close
+
+	F.Intrinsic.String.Concat("Select * from GCG_LEI_Ship where Order_No = '",V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim,"' and Part = '",V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim,"'",V.Local.sSql)
+'	F.Intrinsic.String.Concat("Select Lot, Bin from Item_History where Order_No = '",V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim,"' and Part = '",V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim,"' and Code_Transaction = 'O35'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+'	V.Local.sLine.Set(V.uGlobal.uPacking(v.Local.iCount)!sSeq.Trim)
+	'Check to see if line exists
+	F.Intrinsic.String.Concat("Select * from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine.Trim,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstc",V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.conx!rstc.EOF,=,True)
+		'Add new record here
+		'This section is needed because the damn reprint is jacked and does not pull in all the information that it did on the original printing
+		F.ODBC.conx!rstc.AddNew
+		F.ODBC.conx!rstc.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstc.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstc.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstc.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstc.Set!Copy_No(0)
+		F.ODBC.conx!rstc.Set!Record_No(V.uGlobal.uPacking(v.Local.iCount)!sRecNum)
+		F.ODBC.conx!rstc.Set!Line_Type("L")
+		F.ODBC.conx!rstc.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstc.Set!Part(V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim)
+		F.ODBC.conx!rstc.Set!Description(V.uGlobal.uPacking(v.Local.iCount)!sDesc.Trim)
+		F.ODBC.conx!rstc.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstc.Set!UM(V.uGlobal.uPacking(v.Local.iCount)!sUM.Trim)
+'		F.ODBC.conx!rstc.Set!Qty_Shipped(V.uGlobal.uPacking(v.Local.iCount)!iShipped.Trim)
+		F.ODBC.conx!rstc.Set!Qty_Shipped(V.Local.iBin)
+		F.ODBC.conx!rstc.Set!Qty_BO(V.uGlobal.uPacking(v.Local.iCount)!iBO.Trim)
+
+		F.ODBC.conx!rstc.Update
+	F.Intrinsic.Control.Else
+		F.ODBC.conx!rstc.Set!Record_No(V.uGlobal.uPacking(v.Local.iCount)!sRecNum)
+		F.ODBC.conx!rstc.Set!Line_Type("L")
+		F.ODBC.conx!rstc.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstc.Set!Part(V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim)
+		F.ODBC.conx!rstc.Set!Description(V.uGlobal.uPacking(v.Local.iCount)!sDesc.Trim)
+		F.ODBC.conx!rstc.Set!UM(V.uGlobal.uPacking(v.Local.iCount)!sUM.Trim)
+'		F.ODBC.conx!rstc.Set!Qty_Shipped(V.uGlobal.uPacking(v.Local.iCount)!iShipped.Trim)
+		F.ODBC.conx!rstc.Set!Qty_Shipped(V.Local.iBin)
+		F.ODBC.conx!rstc.Set!Qty_BO(V.uGlobal.uPacking(v.Local.iCount)!iBO.Trim)
+		F.ODBC.conx!rstc.Update
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstc.Close
+'		F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine2)
+		V.Local.sLine2.Set(V.Local.sLine)
+		F.Intrinsic.Control.DoUntil(V.ODBC.conx!rst.EOF,=,True)
+'			F.Intrinsic.String.Concat("Select User_Field_1, User_Field_2, Quantity From Item_Master where Part = '",V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim,"' and Lot = '",V.ODBC.conx!rst.FieldValTrim!Lot,"' and Bin = '",V.ODBC.conx!rst.FieldValTrim!Bin,"'",V.Local.sSql)
+'			F.ODBC.Connection!conx.OpenLocalRecordsetRO("rstw",V.Local.sSql)
+			F.Intrinsic.Math.Add(V.Local.sNet,V.ODBC.conx!rst.FieldValTrim!Net,V.Local.sNet)
+'			F.Intrinsic.Math.Add(V.Local.sNet,V.ODBC.conx!rstw.FieldValTrim!Quantity,V.Local.sNet)
+			F.Intrinsic.Math.Add(V.Local.sTare,V.ODBC.conx!rst.FieldValTrim!Tare,V.Local.sTare)
+'			F.Intrinsic.Math.Add(V.Local.sTare,V.ODBC.conx!rstw.FieldValTrim!User_Field_1,V.Local.sTare)
+			F.Intrinsic.Math.Add(V.Local.sGross,V.ODBC.conx!rst.FieldValTrim!Gross,V.Local.sGross)
+			F.Intrinsic.Math.Add(V.Local.sNet,V.Local.sTare,V.Local.sGross)
+'			F.Intrinsic.Math.Add(V.Local.sGross,V.ODBC.conx!rstw.FieldValTrim!User_Field_2,V.Local.sGross)
+'			F.ODBC.conx!rstw.Close
+	'Print lot here
+			F.Intrinsic.Math.Add(V.Local.sLine2,1,V.Local.sLine2)
+			F.Intrinsic.String.LPad(V.Local.sLine2,"0",6,V.Local.sLine2)
+			F.Intrinsic.String.Concat("Select * from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine2,"'",V.Local.sSql)
+			F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstr",V.Local.sSql)
+'Changed to add the Net qty used in that lot
+			F.Intrinsic.String.Concat("Lot:  ",V.ODBC.conx!rst.FieldValTrim!Lot,"   Qty:  ",V.ODBC.conx!rst.FieldValLTrim!Net,V.Local.sRet)
+			F.Intrinsic.Control.If(V.ODBC.conx!rstr.EOF,=,False)
+				F.ODBC.conx!rstr.Set!Description(V.Local.sRet)
+				F.ODBC.conx!rstr.Set!Line_Type("D")
+				F.ODBC.conx!rstr.Update
+			F.Intrinsic.Control.Else
+		'Do something here
+				F.ODBC.conx!rstr.AddNew
+				F.ODBC.conx!rstr.Set!Terminal(V.Global.sTerminal.Trim)
+				F.ODBC.conx!rstr.Set!RPTID(V.Global.sReportID.Trim)
+				F.ODBC.conx!rstr.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+				F.ODBC.conx!rstr.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+				F.ODBC.conx!rstr.Set!Copy_No(0)
+''				F.ODBC.conx!rstr.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+				F.ODBC.conx!rstr.Set!Sequence(V.Local.sLine2)
+				F.ODBC.conx!rstr.Set!Description(V.Local.sRet)
+				F.ODBC.conx!rstr.Set!Line_Type("D")
+				F.ODBC.conx!rstr.Update
+			F.Intrinsic.Control.EndIf
+			F.ODBC.conx!rstr.Close
+			F.ODBC.conx!rst.MoveNext
+		F.Intrinsic.Control.Loop
+
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+	F.Intrinsic.String.Concat("Select * from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstp",V.Local.sSql)
+	F.Intrinsic.String.Concat("Net:     ",V.Local.sNet,V.Local.sNet)
+	F.Intrinsic.String.Concat("Tare:    ",V.Local.sTare,V.Local.sTare)
+	F.Intrinsic.String.Concat("Gross:  ",V.Local.sGross,V.Local.sGross)
+	'Check EOF
+	F.Intrinsic.Control.If(V.ODBC.conx!rstp.EOF,=,False)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sNet)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Else
+		'Do Something Here
+		F.ODBC.conx!rstp.AddNew
+		F.ODBC.conx!rstp.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstp.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstp.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstp.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstp.Set!Copy_No(0)
+'		F.ODBC.conx!rstp.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstp.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sNet)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstp.Close
+
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+	F.Intrinsic.String.Concat("Select * from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstp",V.Local.sSql)
+	'Check EOF
+	F.Intrinsic.Control.If(V.ODBC.conx!rstp.EOF,=,False)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sTare)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Else
+		'Do Something here
+		F.ODBC.conx!rstp.AddNew
+		F.ODBC.conx!rstp.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstp.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstp.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstp.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstp.Set!Copy_No(0)
+'		F.ODBC.conx!rstp.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstp.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sTare)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Endif
+	F.ODBC.conx!rstp.Close
+
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+	F.Intrinsic.String.Concat("Select *  from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstp",V.Local.sSql)
+	'Check EOF
+
+
+	F.Intrinsic.Control.If(V.ODBC.conx!rstp.EOF,=,False)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sGross)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Else
+		'Do something here
+		F.ODBC.conx!rstp.AddNew
+		F.ODBC.conx!rstp.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstp.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstp.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstp.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstp.Set!Copy_No(0)
+'		F.ODBC.conx!rstp.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstp.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sGross)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstp.Close
+
+
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+'If here to see which line count is greater
+
+
+
+	F.Intrinsic.Control.If(V.Local.sLine,>,V.Local.sLine2)
+		F.Intrinsic.String.Concat("Select *  from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.Intrinsic.Control.Else
+		V.Local.sLine.Set(V.Local.sLine2)
+		F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+		F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+		F.Intrinsic.String.Concat("Select *  from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.Intrinsic.Control.EndIf
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstp",V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.conx!rstp.EOF,=,True)
+		F.ODBC.conx!rstp.AddNew
+		F.ODBC.conx!rstp.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstp.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstp.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstp.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstp.Set!Copy_No(0)
+'		F.ODBC.conx!rstp.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstp.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstp.Set!Line_Type("B")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Else
+		F.ODBC.conx!rstp.Set!Line_Type("B")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Endif
+	F.ODBC.conx!rstp.Close
+
+	F.ODBC.conx!rst.Close
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+	V.Local.sNet.Set("")
+	V.Local.sGross.Set("")
+	V.Local.sTare.Set("")
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+F.Intrinsic.String.Concat("Delete from BI_Packing_List where Part = '' and Description = '' and Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence > 000001 and Line_Type <> 'B'",V.Local.sSql)
+F.ODBC.Connection!conx.Execute(V.Local.sSql)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Net_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_LEI_Packing.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Net.End
+
+Program.Sub.Gross.Start
+F.Intrinsic.Control.SetErrorHandler("Gross_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sPart.Declare(String)
+V.Local.sLot.Declare(String)
+V.Local.sSql.Declare(String)
+V.Local.sNet.Declare(String)
+V.Local.sTare.Declare(String)
+V.Local.sGross.Declare(String)
+V.Local.sLine.Declare(String)
+V.Local.sLine2.Declare(String)
+V.Local.sRet.Declare(String)
+V.Local.iCount.Declare(Long)
+V.Local.iBin.Declare(Long)
+
+'Loop through the Packing List
+F.Intrinsic.String.Concat("Update BI_Packing_List set Part = '', Description = '', Record_Type = '', Record_No = '', Line_Type = '', UM= '', Qty_Shipped = '', Qty_BO = ''   where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence > 000001",V.Local.sSql)
+F.ODBC.Connection!conx.Execute(V.Local.sSql)
+
+
+V.Local.sLine.Set(V.uGlobal.uPacking(v.Local.iCount)!sSeq.Trim)
+
+F.Intrinsic.Control.For(V.Local.iCount,0,V.uGlobal.uPacking.UBound,1)
+	F.Intrinsic.String.Concat("Select Count (Bin) as Bin from GCG_Lei_Ship where Order_No = '",V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim,"' and Part = '",V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+	V.Local.iBin.Set(V.ODBC.conx!rst.FieldValTrim!Bin)
+	F.ODBC.conx!rst.Close
+
+	F.Intrinsic.String.Concat("Select * from GCG_LEI_Ship where Order_No = '",V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim,"' and Part = '",V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim,"'",V.Local.sSql)
+
+'	F.Intrinsic.String.Concat("Select Lot, Bin from Item_History where Order_No = '",V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim,"' and Part = '",V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim,"' and Code_Transaction = 'O35'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+	'Check to see if line exists
+	F.Intrinsic.String.Concat("Select * from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine.Trim,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstc",V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.conx!rstc.EOF,=,True)
+		'Add new record here
+		'This section is needed because the damn reprint is jacked and does not pull in all the information that it did on the original printing
+		F.ODBC.conx!rstc.AddNew
+		F.ODBC.conx!rstc.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstc.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstc.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstc.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstc.Set!Copy_No(0)
+		F.ODBC.conx!rstc.Set!Record_No(V.uGlobal.uPacking(v.Local.iCount)!sRecNum)
+		F.ODBC.conx!rstc.Set!Line_Type("L")
+		F.ODBC.conx!rstc.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstc.Set!Part(V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim)
+		F.ODBC.conx!rstc.Set!Description(V.uGlobal.uPacking(v.Local.iCount)!sDesc.Trim)
+		F.ODBC.conx!rstc.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstc.Set!UM(V.uGlobal.uPacking(v.Local.iCount)!sUM.Trim)
+'		F.ODBC.conx!rstc.Set!Qty_Shipped(V.uGlobal.uPacking(v.Local.iCount)!iShipped.Trim)
+		F.ODBC.conx!rstc.Set!Qty_Shipped(V.Local.iBin)
+		F.ODBC.conx!rstc.Set!Qty_BO(V.uGlobal.uPacking(v.Local.iCount)!iBO.Trim)
+		F.ODBC.conx!rstc.Update
+	F.Intrinsic.Control.Else
+		F.ODBC.conx!rstc.Set!Record_No(V.uGlobal.uPacking(v.Local.iCount)!sRecNum)
+		F.ODBC.conx!rstc.Set!Line_Type("L")
+		F.ODBC.conx!rstc.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstc.Set!Part(V.uGlobal.uPacking(v.Local.iCount)!sPart.Trim)
+		F.ODBC.conx!rstc.Set!Description(V.uGlobal.uPacking(v.Local.iCount)!sDesc.Trim)
+		F.ODBC.conx!rstc.Set!UM(V.uGlobal.uPacking(v.Local.iCount)!sUM.Trim)
+'		F.ODBC.conx!rstc.Set!Qty_Shipped(V.uGlobal.uPacking(v.Local.iCount)!iShipped.Trim)
+		F.ODBC.conx!rstc.Set!Qty_Shipped(V.Local.iBin)
+		F.ODBC.conx!rstc.Set!Qty_BO(V.uGlobal.uPacking(v.Local.iCount)!iBO.Trim)
+		F.ODBC.conx!rstc.Update
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstc.Close
+'		F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine2)
+		V.Local.sLine2.Set(V.Local.sLine)
+		F.Intrinsic.Control.DoUntil(V.ODBC.conx!rst.EOF,=,True)
+			F.Intrinsic.Math.Add(V.Local.sNet,V.ODBC.conx!rst.FieldValTrim!Net,V.Local.sNet)
+'			F.Intrinsic.Math.Add(V.Local.sNet,V.ODBC.conx!rstw.FieldValTrim!Quantity,V.Local.sNet)
+			F.Intrinsic.Math.Add(V.Local.sTare,V.ODBC.conx!rst.FieldValTrim!Tare,V.Local.sTare)
+'			F.Intrinsic.Math.Add(V.Local.sTare,V.ODBC.conx!rstw.FieldValTrim!User_Field_1,V.Local.sTare)
+			F.Intrinsic.Math.Add(V.Local.sGross,V.ODBC.conx!rst.FieldValTrim!Gross,V.Local.sGross)
+			F.Intrinsic.Math.Add(V.Local.sNet,V.Local.sTare,V.Local.sGross)
+'			F.Intrinsic.Math.Add(V.Local.sGross,V.ODBC.conx!rstw.FieldValTrim!User_Field_2,V.Local.sGross)
+'			F.ODBC.conx!rstw.Close
+	'Print lot here
+			F.Intrinsic.Math.Add(V.Local.sLine2,1,V.Local.sLine2)
+			F.Intrinsic.String.LPad(V.Local.sLine2,"0",6,V.Local.sLine2)
+			F.Intrinsic.String.Concat("Select * from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine2,"'",V.Local.sSql)
+			F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstr",V.Local.sSql)
+			F.Intrinsic.String.Concat("Lot:  ",V.ODBC.conx!rst.FieldValTrim!Lot,"   Qty:  ",V.ODBC.conx!rst.FieldValLTrim!Net,V.Local.sRet)
+			F.Intrinsic.Control.If(V.ODBC.conx!rstr.EOF,=,False)
+				F.ODBC.conx!rstr.Set!Description(V.Local.sRet)
+				F.ODBC.conx!rstr.Set!Line_Type("D")
+				F.ODBC.conx!rstr.Update
+			F.Intrinsic.Control.Else
+		'Do something here
+				F.ODBC.conx!rstr.AddNew
+				F.ODBC.conx!rstr.Set!Terminal(V.Global.sTerminal.Trim)
+				F.ODBC.conx!rstr.Set!RPTID(V.Global.sReportID.Trim)
+				F.ODBC.conx!rstr.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+				F.ODBC.conx!rstr.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+				F.ODBC.conx!rstr.Set!Copy_No(0)
+'				F.ODBC.conx!rstr.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+				F.ODBC.conx!rstr.Set!Sequence(V.Local.sLine2)
+				F.ODBC.conx!rstr.Set!Description(V.Local.sRet)
+				F.ODBC.conx!rstr.Set!Line_Type("D")
+				F.ODBC.conx!rstr.Update
+			F.Intrinsic.Control.EndIf
+			F.ODBC.conx!rstr.Close
+			F.ODBC.conx!rst.MoveNext
+		F.Intrinsic.Control.Loop
+
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+	F.Intrinsic.String.Concat("Select * from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstp",V.Local.sSql)
+'	F.Intrinsic.String.Concat("Net:     ",V.Local.sNet,V.Local.sNet)
+'	F.Intrinsic.String.Concat("Tare:    ",V.Local.sTare,V.Local.sTare)
+	F.Intrinsic.String.Concat("Gross:  ",V.Local.sGross,V.Local.sGross)
+	'Check EOF
+	F.Intrinsic.Control.If(V.ODBC.conx!rstp.EOF,=,False)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sGross)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Else
+		'Do Something Here
+		F.ODBC.conx!rstp.AddNew
+		F.ODBC.conx!rstp.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstp.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstp.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstp.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstp.Set!Copy_No(0)
+'		F.ODBC.conx!rstp.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstp.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstp.Set!Part(V.Local.sGross)
+		F.ODBC.conx!rstp.Set!Line_Type("D")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstp.Close
+
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+
+
+
+'If here to see which line count is greater
+	F.Intrinsic.Control.If(V.Local.sLine,>,V.Local.sLine2)
+		F.Intrinsic.String.Concat("Select *  from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.Intrinsic.Control.Else
+		V.Local.sLine.Set(V.Local.sLine2)
+		F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+		F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+		F.Intrinsic.String.Concat("Select *  from BI_Packing_List where Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence = '",V.Local.sLine,"'",V.Local.sSql)
+	F.Intrinsic.Control.EndIf
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstp",V.Local.sSql)
+	F.Intrinsic.Control.If(V.ODBC.conx!rstp.EOF,=,True)
+		F.ODBC.conx!rstp.AddNew
+		F.ODBC.conx!rstp.Set!Terminal(V.Global.sTerminal.Trim)
+		F.ODBC.conx!rstp.Set!RPTID(V.Global.sReportID.Trim)
+		F.ODBC.conx!rstp.Set!Order_No(V.uGlobal.uPacking(v.Local.iCount)!sOrder.Trim)
+		F.ODBC.conx!rstp.Set!Order_Suffix(V.uGlobal.uPacking(v.Local.iCount)!sOrderSuffix.Trim)
+		F.ODBC.conx!rstp.Set!Copy_No(0)
+'		F.ODBC.conx!rstp.Set!Qty_Order(V.uGlobal.uPacking(v.Local.iCount)!iQty.Trim)
+		F.ODBC.conx!rstp.Set!Sequence(V.Local.sLine)
+		F.ODBC.conx!rstp.Set!Line_Type("B")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Else
+		F.ODBC.conx!rstp.Set!Line_Type("B")
+		F.ODBC.conx!rstp.Update
+	F.Intrinsic.Control.Endif
+	F.ODBC.conx!rstp.Close
+
+	F.ODBC.conx!rst.Close
+	F.Intrinsic.Math.Add(V.Local.sLine,1,V.Local.sLine)
+	F.Intrinsic.String.LPad(V.Local.sLine,"0",6,V.Local.sLine)
+	V.Local.sGross.Set("")
+	V.Local.sNet.Set("")
+	V.Local.sTare.Set("")
+
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+F.Intrinsic.String.Concat("Delete from BI_Packing_List where Part = '' and Description = '' and Terminal = '",V.Global.sTerminal,"' and RPTID = '",V.Global.sReportID,"' and Sequence > 000001 and Line_Type <> 'B'",V.Local.sSql)
+F.ODBC.Connection!conx.Execute(V.Local.sSql)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Gross_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_LEI_Packing.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Gross.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.SetErrorHandler("Unload_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+F.ODBC.Connection!conx.Close
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_LEI_Packing.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Unload.End
+
+
